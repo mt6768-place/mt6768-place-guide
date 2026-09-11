@@ -1,0 +1,28 @@
+diff --git a/gui/libguitwrp_defaults.go b/gui/libguitwrp_defaults.go
+index 92b16321..fcedea89 100644
+--- a/gui/libguitwrp_defaults.go
++++ b/gui/libguitwrp_defaults.go
+@@ -42,6 +42,11 @@ func printCustomThemeWarning(theme string, location string) {
+ 
+ func copyThemeResources(ctx android.BaseContext, dirs []string, files []string) {
+ 	outDir := ctx.Config().Getenv("OUT")
++	// soong_build corre con cwd "/" y este servidor exporta OUT como ruta
++	// relativa, asi que hay que anclarla a la raiz del arbol.
++	if !strings.HasPrefix(outDir, "/") {
++		outDir = getBuildAbsDir(ctx) + outDir
++	}
+ 	twRes := outDir + "/recovery/root/twres/"
+ 	os.MkdirAll(twRes, os.ModePerm)
+ 	recoveryDir := getRecoveryAbsDir(ctx)
+@@ -174,6 +179,11 @@ func copyThemeResources(ctx android.BaseContext, dirs []string, files []string)
+ 
+ func copyCustomTheme(ctx android.BaseContext, customTheme string) {
+ 	outDir := ctx.Config().Getenv("OUT")
++	// soong_build corre con cwd "/" y este servidor exporta OUT como ruta
++	// relativa, asi que hay que anclarla a la raiz del arbol.
++	if !strings.HasPrefix(outDir, "/") {
++		outDir = getBuildAbsDir(ctx) + outDir
++	}
+ 	twRes := outDir + "/recovery/root/twres/"
+ 	os.MkdirAll(twRes, os.ModePerm)
+ 	fileDest := twRes + path.Base(customTheme)

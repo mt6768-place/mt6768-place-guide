@@ -1,0 +1,45 @@
+diff --git a/aidl_language.cpp b/aidl_language.cpp
+index 5bff95e5..954f16b6 100644
+--- a/aidl_language.cpp
++++ b/aidl_language.cpp
+@@ -87,16 +87,19 @@ std::string AidlNode::PrintLocation() const {
+   return ss.str();
+ }
+ 
+-static const AidlTypeSpecifier kStringType{AIDL_LOCATION_HERE, "String", false, nullptr,
+-                                           Comments{}};
+-static const AidlTypeSpecifier kStringArrayType{AIDL_LOCATION_HERE, "String", true, nullptr,
+-                                                Comments{}};
+-static const AidlTypeSpecifier kIntType{AIDL_LOCATION_HERE, "int", false, nullptr, Comments{}};
+-static const AidlTypeSpecifier kLongType{AIDL_LOCATION_HERE, "long", false, nullptr, Comments{}};
+-static const AidlTypeSpecifier kBooleanType{AIDL_LOCATION_HERE, "boolean", false, nullptr,
+-                                            Comments{}};
+-
+ const std::vector<AidlAnnotation::Schema>& AidlAnnotation::AllSchemas() {
++  // Los tipos de parametro se declaran aqui dentro (estaticos de funcion) para
++  // garantizar que estan construidos antes que kSchemas, que guarda referencias
++  // a ellos. Como estaticos de ambito de fichero el orden no esta garantizado y
++  // type.GetName() acababa segfaulteando con cualquier anotacion con parametros.
++  static const AidlTypeSpecifier kStringType{AIDL_LOCATION_HERE, "String", false, nullptr,
++                                             Comments{}};
++  static const AidlTypeSpecifier kIntType{AIDL_LOCATION_HERE, "int", false, nullptr, Comments{}};
++  static const AidlTypeSpecifier kLongType{AIDL_LOCATION_HERE, "long", false, nullptr, Comments{}};
++  static const AidlTypeSpecifier kBooleanType{AIDL_LOCATION_HERE, "boolean", false, nullptr,
++                                              Comments{}};
++  static const AidlTypeSpecifier kStringArrayType{AIDL_LOCATION_HERE, "String", true, nullptr,
++                                                  Comments{}};
+   static const std::vector<Schema> kSchemas{
+       {AidlAnnotation::Type::NULLABLE, "nullable", CONTEXT_TYPE_SPECIFIER, {}},
+       {AidlAnnotation::Type::UTF8_IN_CPP, "utf8InCpp", CONTEXT_TYPE_SPECIFIER, {}},
+@@ -200,7 +203,10 @@ AidlAnnotation::AidlAnnotation(
+     : AidlNode(location, comments), schema_(schema), parameters_(std::move(parameters)) {}
+ 
+ struct ConstReferenceFinder : AidlVisitor {
+-  const AidlConstantReference* found;
++  // Sin inicializar, con -ftrivial-auto-var-init=pattern vale 0xAAAA..., asi que
++  // "if (!found)" nunca se cumple y Find() devuelve un puntero basura que
++  // AIDL_ERROR() luego desreferencia -> SIGSEGV en toda anotacion con parametros.
++  const AidlConstantReference* found = nullptr;
+   void Visit(const AidlConstantReference& ref) override {
+     if (!found) found = &ref;
+   }

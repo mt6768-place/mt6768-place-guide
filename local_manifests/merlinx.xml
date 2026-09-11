@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+
+  <remote name="hub" fetch="https://github.com" />
+
+  <!-- Device tree del recovery (separado del de la ROM) -->
+  <project path="device/xiaomi/merlinx"
+           name="mt6768-place/recovery_device_xiaomi_merlinx"
+           remote="hub" revision="recovery-12.1" />
+
+</manifest>

@@ -1,0 +1,93 @@
+diff --git a/Decrypt.cpp b/Decrypt.cpp
+index d9f034b..b6defce 100755
+--- a/Decrypt.cpp
++++ b/Decrypt.cpp
+@@ -563,14 +563,24 @@ namespace keystore {
+ 				printf("malloc failure on secret key\n");
+ 				return disk_decryption_secret_key;
+ 			}
+-			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, cipher_size);
++			// El tag GCM son los ultimos 16 bytes del texto cifrado. Antes se pasaba
++			// un buffer sin inicializar y se ignoraba el resultado de DecryptFinal,
++			// asi que una clave incorrecta devolvia basura sin avisar.
++			int gcm_ct_len = cipher_size - 16;
++			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, gcm_ct_len);
+ 			unsigned char tag[AES_BLOCK_SIZE];
++			memcpy(tag, intermediate_cipher_text + gcm_ct_len, 16);
+ 			EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16, tag);
+-			EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
++			int gcm_ok = EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
++			if (gcm_ok != 1) {
++				printf("GCM: tag incorrecto -> el application_id (%zu bytes) no es el que cifro este blob\n", application_id_size);
++			} else {
++				printf("GCM: tag correcto (application_id de %zu bytes)\n", application_id_size);
++			}
+ 			EVP_CIPHER_CTX_free(d_ctx);
+ 			free(personalized_application_id);
+ 			free(keystore_result);
+-			int secret_key_real_size = actual_size - 16;
++			int secret_key_real_size = actual_size + final_size;
+ 			// printf("secret key:  "); output_hex((const unsigned char*)secret_key, secret_key_real_size); printf("\n");
+ 			// The payload data from the keystore update is further personalized at https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
+ 			// We now have the disk decryption key!
+@@ -664,7 +674,8 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 	// printf("pwd N %i R %i P %i salt ", pwd.scryptN, pwd.scryptR, pwd.scryptP); output_hex((char*)pwd.salt, pwd.salt_len); printf("\n");
+ 	// printf("Password: '%s'\n", Password.c_str());
+ 	// The password token is the password scrypted with the parameters from the password data file
+-	unsigned char password_token[PASSWORD_TOKEN_SIZE];
++	unsigned char password_token[PASSWORD_TOKEN_SIZE] = {0};
++	const size_t password_token_size = PASSWORD_TOKEN_SIZE;
+ 	if (Password != "!") {
+ 		if (!Get_Password_Data(spblob_path, handle_str, &pwd)) {
+ 			printf("Failed to Get_Password_Data\n");
+@@ -679,6 +690,10 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 		android::keystore::copySqliteDb(); // early copy db for keystore
+ 		std::string defpassword = "default-password";
+ 		memcpy(password_token, defpassword.data(), defpassword.length());
++		// AOSP: stretchLskf() -> Arrays.copyOf(DEFAULT_PASSWORD, STRETCHED_LSKF_LENGTH),
++		// o sea "default-password" rellenado con ceros hasta 32 bytes. El resto del
++		// buffer debe quedar a cero: antes iba sin inicializar y esos 16 bytes de
++		// basura corrompian el application_id.
+ 	}
+ 	// output_hex(&password_token[0], PASSWORD_TOKEN_SIZE);printf("\n");
+ 	if (Is_Weaver(spblob_path, handle_str)) {
+@@ -693,7 +708,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 		}
+ 		// The weaver key is the the password token prefixed with "weaver-key" padded to 128 with nulls with the password token appended then SHA512
+ 		// https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#1059
+-		weaver_key = PersonalizedHashBinary(PERSONALISATION_WEAVER_KEY, (char*)&password_token[0], PASSWORD_TOKEN_SIZE);
++		weaver_key = PersonalizedHashBinary(PERSONALISATION_WEAVER_KEY, (char*)&password_token[0], password_token_size);
+ 		if (!weaver_key) {
+ 			printf("malloc error getting weaver_key\n");
+ 			return Free_Return(retval, weaver_key, &pwd);
+@@ -730,8 +745,8 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 		void* weaver_secret = PersonalizedHashBinary(PERSONALISATION_WEAVER_PASSWORD, (const char*)weaver_payload.data(), weaver_payload.size());
+ 		// printf("weaver secret: "); output_hex((unsigned char*)weaver_secret, SHA512_DIGEST_LENGTH); printf("\n");
+ 		// The application ID is the password token and weaver secret appended to each other
+-		memcpy((void*)&application_id[0], (void*)&password_token[0], PASSWORD_TOKEN_SIZE);
+-		memcpy((void*)&application_id[PASSWORD_TOKEN_SIZE], weaver_secret, SHA512_DIGEST_LENGTH);
++		memcpy((void*)&application_id[0], (void*)&password_token[0], password_token_size);
++		memcpy((void*)&application_id[password_token_size], weaver_secret, SHA512_DIGEST_LENGTH);
+ 		// printf("application ID: "); output_hex((unsigned char*)application_id, PASSWORD_TOKEN_SIZE + SHA512_DIGEST_LENGTH); printf("\n");
+ 		// END PIXEL 2 WEAVER
+ 	} else {
+@@ -746,8 +761,8 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 			printf("malloc error getting secdiscardable\n");
+ 			return Free_Return(retval, weaver_key, &pwd);
+ 		}
+-		memcpy((void*)&application_id[0], (void*)&password_token[0], PASSWORD_TOKEN_SIZE);
+-		memcpy((void*)&application_id[PASSWORD_TOKEN_SIZE], secdiscardable, SHA512_DIGEST_LENGTH);
++		memcpy((void*)&application_id[0], (void*)&password_token[0], password_token_size);
++		memcpy((void*)&application_id[password_token_size], secdiscardable, SHA512_DIGEST_LENGTH);
+ 		if (Password != "!") {
+ 			int ret = -1;
+ 			bool request_reenroll = false;
+@@ -813,7 +828,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 	// Plus we will include the last bit that computes the disk decrypt key found in:
+ 	// https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
+ 	secret = android::keystore::unwrapSyntheticPasswordBlob(spblob_path, handle_str, user_id, (const void*)&application_id[0], 
+-		PASSWORD_TOKEN_SIZE + SHA512_DIGEST_LENGTH, auth_token_len);
++		password_token_size + SHA512_DIGEST_LENGTH, auth_token_len);
+ 	if (!secret.size()) {
+ 		printf("failed to unwrapSyntheticPasswordBlob\n");
+ 		return Free_Return(retval, weaver_key, &pwd);

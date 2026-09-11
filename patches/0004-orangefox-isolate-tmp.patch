@@ -1,0 +1,88 @@
+diff --git a/OrangeFox_A12.sh b/OrangeFox_A12.sh
+index 3472bce..705f1ca 100755
+--- a/OrangeFox_A12.sh
++++ b/OrangeFox_A12.sh
+@@ -43,6 +43,10 @@ FOX_DEVICE=$(cut -d'_' -f2 <<<$TARGET_PRODUCT)
+ THIS_SCRIPT=$(basename $0)
+ 
+ # environment/build-var imports
++# Este servidor es compartido: otro usuario compila OrangeFox a la vez y
++# el script usaba rutas fijas en /tmp, asi que las builds se pisaban.
++FOX_TMP_BASE=/tmp/ofox_$(id -un)
++mkdir -p "$FOX_TMP_BASE"
+ FOXENV=/tmp/$FOX_DEVICE/fox_env.sh
+ if [ -f "$FOXENV" ]; then
+    source "$FOXENV"
+@@ -81,8 +85,8 @@ WHITEONORANGE='\033[0;43m'
+ WHITEONBLUE='\033[0;44m'
+ WHITEONPURPLE='\033[0;46m'
+ NC='\033[0m'
+-TMP_SCRATCH=/tmp/fox_build_000tmp.txt
+-WORKING_TMP=/tmp/Fox_000_tmp
++TMP_SCRATCH=$FOX_TMP_BASE/fox_build_000tmp.txt
++WORKING_TMP=$FOX_TMP_BASE/Fox_000_tmp
+ 
+ # make sure we know exactly which commands we are running
+ CP=/bin/cp
+@@ -566,7 +570,7 @@ local TDT=$(date "+%d %B %Y")
+ 
+   # vendor_boot as recovery - add the ramdisk image to the zip
+   if [ "$IS_VENDOR_BOOT_RECOVERY" = "1" -a -x $FOX_VENDOR_PATH/tools/magiskboot ]; then
+-     local VBtmp=/tmp/VBOOT_stuff
++     local VBtmp=$FOX_TMP_BASE/VBOOT_stuff
+      mkdir -p $VBtmp/
+      $CP -p $RECOVERY_IMAGE $VBtmp/tmp.img
+      $CP -p $FOX_VENDOR_PATH/Files/flash-* .
+@@ -675,7 +679,7 @@ local TDT=$(date "+%d %B %Y")
+      echo -e "${RED}-- A/B device - copying magiskboot to zip installer ... ${NC}"
+      tmp=$FOX_RAMDISK/$RAMDISK_SBIN/magiskboot
+      [ ! -e "$tmp" ] && tmp=$FOX_VENDOR_PATH/prebuilt/$TARGET_ARCH/magiskboot"$UPDATED"
+-     [ ! -e "$tmp" ] && tmp=/tmp/fox_build_tmp/magiskboot
++     [ ! -e "$tmp" ] && tmp=$FOX_TMP_BASE/fox_build_tmp/magiskboot
+      [ ! -e "$tmp" ] && {
+        echo -e "${WHITEONRED}-- I cannot find magiskboot. Quitting! ${NC}"
+        abort 200
+@@ -684,7 +688,7 @@ local TDT=$(date "+%d %B %Y")
+      chmod 0755 ./magiskboot
+      sed -i -e "s/^FOX_AB_DEVICE=.*/FOX_AB_DEVICE=\"1\"/" $F
+   fi
+-  rm -rf /tmp/fox_build_tmp/
++  rm -rf $FOX_TMP_BASE/fox_build_tmp/
+ 
+   # vendor_boot
+   if [ "$IS_VENDOR_BOOT_RECOVERY" = "1" ]; then
+@@ -834,9 +838,9 @@ local TDT=$(date "+%d %B %Y")
+   echo "---------------------------------"
+ 
+   # export the filenames
+-  echo "ZIP_FILE=$ZIP_FILE">/tmp/oFox00.tmp
+-  echo "RECOVERY_IMAGE=$RECOVERY_IMAGE">>/tmp/oFox00.tmp
+-  [ -f $RECOVERY_IMAGE".tar" ] && echo "RECOVERY_ODIN=$RECOVERY_IMAGE.tar" >>/tmp/oFox00.tmp
++  echo "ZIP_FILE=$ZIP_FILE">$FOX_TMP_BASE/oFox00.tmp
++  echo "RECOVERY_IMAGE=$RECOVERY_IMAGE">>$FOX_TMP_BASE/oFox00.tmp
++  [ -f $RECOVERY_IMAGE".tar" ] && echo "RECOVERY_ODIN=$RECOVERY_IMAGE.tar" >>$FOX_TMP_BASE/oFox00.tmp
+ 
+   # delete OF Working dir
+   rm -rf $FOX_TMP_WORKING_DIR 
+@@ -1204,7 +1208,7 @@ process_reference_vendor_boot_image() {
+ expand_vendor_path
+ 
+ # did we export tmp directory for OrangeFox ports?
+-[ -n "$FOX_PORTS_TMP" ] && FOX_TMP_WORKING_DIR="$FOX_PORTS_TMP" || FOX_TMP_WORKING_DIR="/tmp/fox_zip_tmp"
++[ -n "$FOX_PORTS_TMP" ] && FOX_TMP_WORKING_DIR="$FOX_PORTS_TMP" || FOX_TMP_WORKING_DIR="$FOX_TMP_BASE/fox_zip_tmp"
+ 
+ # is the working directory still there from a previous build? If so, remove it
+ if [ "$FOX_VENDOR_CMD" != "Fox_Before_Recovery_Image" ]; then
+@@ -1264,9 +1268,9 @@ if [ "$FOX_VENDOR_CMD" = "Fox_Before_Recovery_Image" ]; then
+ 
+   # deal with magiskboot
+   echo -e "${GREEN}-- This build will use magiskboot for patching boot images ...${NC}"
+-  echo -e "${GREEN}-- Backing up $FOX_RAMDISK/$RAMDISK_SBIN/magiskboot to: /tmp/fox_build_tmp/ ...${NC}"
+-  mkdir -p /tmp/fox_build_tmp/
+-  $CP -pf $FOX_RAMDISK/$RAMDISK_SBIN/magiskboot /tmp/fox_build_tmp/magiskboot
++  echo -e "${GREEN}-- Backing up $FOX_RAMDISK/$RAMDISK_SBIN/magiskboot to: $FOX_TMP_BASE/fox_build_tmp/ ...${NC}"
++  mkdir -p $FOX_TMP_BASE/fox_build_tmp/
++  $CP -pf $FOX_RAMDISK/$RAMDISK_SBIN/magiskboot $FOX_TMP_BASE/fox_build_tmp/magiskboot
+ 
+   # symlink for openrecovery binary
+   if [ -f "$FOX_RAMDISK/$RAMDISK_SYSTEM_BIN/twrp" ]; then
