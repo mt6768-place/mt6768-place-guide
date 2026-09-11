@@ -1,0 +1,15 @@
+diff --git a/Android.bp b/Android.bp
+index 2351544..3dd943d 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -23,7 +23,9 @@ cc_library_shared {
+         "-Werror",
+         "-Wno-gnu-pointer-arith",
+     ],
+-    vendor_available: true,
++    // vendor_available disabled for this device: /vendor/lib64/libmnl.so is
++    // owned by MediaTek's unrelated GPS "mnl" blob, which mnld links against.
++    // Nothing in this tree links the netlink libmnl from a vendor module.
+ 
+     // b/479773959: Restrict visibility once Soong support is available.
+     // For now, use __subpackages__ to unblock development.
