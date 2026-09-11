@@ -1,30 +1,29 @@
-# mt6768-place — guia de compilacion
+# mt6768-place — build guide
 
-Como construir **PixelOS 17 (Android 17)** para Xiaomi **merlinx**
-(Redmi Note 9 / Redmi 10X 4G, MT6768 Helio G85) con los trees de esta
-organizacion.
+Build **PixelOS 17 (Android 17)** for the Xiaomi **merlinx**
+(Redmi Note 9 / Redmi 10X 4G, MT6768 Helio G85) from this organisation's
+device trees.
 
-> La guia del **recovery (OrangeFox)** esta en la rama [`recovery`](../../tree/recovery)
-> de este mismo repo.
+> The **recovery (OrangeFox)** guide lives on the [`recovery`](../../tree/recovery)
+> branch of this repository.
 
 ---
 
-## 1. Requisitos
+## 1. Requirements
 
-- Linux x86_64, 16 GB de RAM o mas y **~300 GB** libres
+- Linux x86_64, 16 GB RAM or more, **~300 GB** free
 - `repo`, `git`, `git-lfs`, `ccache`, JDK 17, Python 3
-- Paciencia: la primera build son un par de horas en una maquina decente
 
-## 2. Sincronizar
+## 2. Sync
 
 ```bash
 bash scripts/sync.sh ~/pixelos-merlinx
 ```
 
-Eso hace `repo init` del manifest de PixelOS, coloca
-`local_manifests/merlinx.xml` y sincroniza. El manifest apunta a:
+This runs `repo init` against the PixelOS manifest, drops
+`local_manifests/merlinx.xml` in place and syncs.
 
-| Ruta | Repo | Rama |
+| Path | Repository | Branch |
 |---|---|---|
 | `device/xiaomi/merlinx` | `device_xiaomi_merlinx` | `a17` |
 | `device/xiaomi/mt6768-common` | `device_xiaomi_mt6768-common` | `a17` |
@@ -33,20 +32,22 @@ Eso hace `repo init` del manifest de PixelOS, coloca
 | `device/mediatek/sepolicy_vndr` | `android_device_mediatek_sepolicy_vndr` | `a17` |
 | `hardware/mediatek` | `android_hardware_mediatek` | `a17` |
 
-**El kernel es el de vendor S.** El repo antiguo terminado en `-r` era para
-vendor R y no sirve aqui.
+**The kernel is the S-vendor one.** The old repository ending in `-r` targeted
+an R vendor and does not work here.
 
-## 3. Aplicar los parches de AOSP
+`vendor/xiaomi/merlinx` and `hardware/xiaomi` carry no changes of ours, so the
+manifest points at their real upstream rather than mirroring them.
+
+## 3. Apply the AOSP patches
 
 ```bash
 bash scripts/apply-patches.sh ~/pixelos-merlinx
 ```
 
-Tres cambios pequenos que viven en repos de AOSP. No forkeamos AOSP entero
-por unas pocas lineas, asi que van como parches. El script detecta si ya
-estaban aplicados.
+Three small changes that live in AOSP repositories. The script detects patches
+that are already applied.
 
-## 4. Compilar
+## 4. Build
 
 ```bash
 cd ~/pixelos-merlinx
@@ -55,22 +56,20 @@ lunch custom_merlinx-cp2a-userdebug
 m pixelos -j$(nproc --all)
 ```
 
-El zip sale en `out/target/product/merlinx/`.
+The flashable zip lands in `out/target/product/merlinx/`.
 
 ---
 
-## Que hubo que arreglar para Android 17
+## What Android 17 required
 
-Cada punto enlaza al commit correspondiente.
+### Black screen at boot — ION
 
-### Pantalla en negro al arrancar — ION
+This kernel is 4.19 and **exposes only ION**, with no `/dev/dma_heap`. From
+Android 17 `libdmabufheap` and `libion` drop the ION path unless the legacy
+implementation is requested, so MediaTek's gralloc cannot allocate **a single
+graphic buffer** and the device boots to a black screen.
 
-Este kernel es 4.19 y **solo expone ION**, sin `/dev/dma_heap`. A partir de
-A17 `libdmabufheap` y `libion` descartan la ruta ION salvo que se pida la
-implementacion legacy, asi que el gralloc de MediaTek no consigue reservar
-**ni un solo buffer grafico** y el telefono arranca a pantalla negra.
-
-Hacen falta **las dos mitades**, no vale solo una:
+Both halves are needed; either one alone does nothing:
 
 ```makefile
 # mt6768.mk
@@ -80,66 +79,65 @@ $(call soong_config_set_bool,libion,legacy_impl,true)
 include device/lineage/sepolicy/libion/sepolicy.mk
 ```
 
-La segunda concede `/dev/ion` a surfaceflinger, el allocator, el composer,
-bootanim, codec2 y la camara. Sin ella el allocator ni siquiera abre el
-dispositivo.
+The second grants `/dev/ion` to surfaceflinger, the allocator, the composer,
+bootanim, codec2 and the camera. Without it the allocator cannot even open the
+device.
 
-### Blobs de MediaTek que chocan con AOSP
+### MediaTek blobs colliding with AOSP module names
 
-`/vendor/lib64/libmnl.so` es la libreria **GPS** de MediaTek y no tiene nada
-que ver con la libmnl de netlink de `external/libmnl`; lo mismo con
-`libformatter`. Con los nombres de modulo originales, la de AOSP pisa a la de
-MediaTek y `mnld` se queda con simbolos `mtk_gps_*` sin resolver.
+`/vendor/lib64/libmnl.so` is MediaTek's **GPS** library and is unrelated to the
+netlink libmnl in `external/libmnl`; the same applies to `libformatter`. With
+the upstream module names the AOSP one overwrites MediaTek's and `mnld` is left
+with unresolved `mtk_gps_*` symbols.
 
-Se renombran a `libmnl_mtk` / `libformatter_mtk` con un `stem` que conserva el
-nombre del fichero instalado, y ademas se desactiva `vendor_available` en
+They are shipped as `libmnl_mtk` / `libformatter_mtk` with a `stem` that
+preserves the installed file name, and `vendor_available` is dropped in
 `external/libmnl`.
 
-### ABI de AudioTrack
+### AudioTrack ABI
 
-A17 anadio un parametro `codecProvenance` al constructor de `AudioTrack`, lo
-que cambia el simbolo mangleado. `libsink-mtk.so` es un prebuilt que sigue
-importando el antiguo y no enlaza. El parche lo quita y pasa una procedencia
-vacia internamente.
+Android 17 added a `codecProvenance` parameter to the `AudioTrack` constructor,
+which changes the mangled symbol. `libsink-mtk.so` is a prebuilt that still
+imports the old one and fails to link. The patch drops the parameter and passes
+an empty provenance internally.
 
-### Telefonia
+### Telephony
 
-Los blobs de MediaTek heredan de clases que upstream marco `final` o
-`private`. El parche relaja `RuimFileHandler`, `CsimFileHandler`,
-`SIMFileHandler`, `UsimFileHandler`, `GsmMmiCode`, `ImsPhoneMmiCode` y
-`GsmSMSDispatcher`, y hace `protected` los estados de `DataNetwork`.
+MediaTek's blobs extend classes upstream marked `final` or `private`. The patch
+relaxes `RuimFileHandler`, `CsimFileHandler`, `SIMFileHandler`,
+`UsimFileHandler`, `GsmMmiCode`, `ImsPhoneMmiCode` and `GsmSMSDispatcher`, and
+makes `DataNetwork`'s states `protected`.
 
 ### SELinux
 
-- `domain.te`: la regla del servicio mali nombraba `native_app_zygote`, un
-  tipo privado que una politica de vendor no puede referenciar. Se expresa
-  con aritmetica de conjuntos sobre `appdomain` / `coredomain`.
-- `genfs_contexts`: fuera el `genfscon` de `sysfs /class/typec`, que ahora
-  choca con la politica de plataforma.
-- `seapp_contexts`: fuera `com.qualcomm.qti.poweroffalarm`, que no existe en
-  esta plataforma.
+- `domain.te`: the mali service rule named `native_app_zygote`, a private type
+  vendor policy may not reference. Expressed through `appdomain` / `coredomain`
+  set arithmetic instead.
+- `genfs_contexts`: dropped the `sysfs /class/typec` genfscon, which now
+  collides with the platform policy.
+- `seapp_contexts`: dropped `com.qualcomm.qti.poweroffalarm`, absent here.
 
 ---
 
-## Rendimiento: tirones y congelaciones
+## Performance: stutter and freezes
 
-Diagnosticado sobre un logcat real de 5 minutos. La cadena era:
+Diagnosed from a real five minute logcat. The chain was:
 
-1. `nr_free` bajaba a **35 MB** y la presion PSI llegaba al **70%**
-2. lmkd mataba **~25 procesos en 22 segundos**
-3. los hilos que sostenian los locks de `system_server` se quedaban en
-   *direct reclaim*: **53 esperas de mas de 1 segundo, la peor de 4,4 s**, en
-   `ActivityManagerService`, `BroadcastController`, `ShortcutService` y
+1. `nr_free` dropped to **35 MB** and PSI pressure reached **70%**
+2. lmkd killed **~25 processes in 22 seconds**
+3. threads holding `system_server` locks stalled in direct reclaim:
+   **53 lock waits over one second, the worst at 4.4 s**, in
+   `ActivityManagerService`, `BroadcastController`, `ShortcutService` and
    `PackageManagerService`
-4. con esos locks tomados, la UI se congelaba: `Skipped 713 frames` (unos 12
-   segundos), 292, 127...
-5. las apps muertas se relanzaban, y **las 225 operaciones lentas del log eran
-   todas de `startProcess`**, realimentando el bucle
+4. with those locks held the UI froze: `Skipped 713 frames` (about 12 seconds),
+   292, 127...
+5. killed apps relaunched, and **all 225 slow operations in the log were
+   `startProcess`**, feeding the loop
 
-### Causa: lmkd sin ajustar
+### Cause: lmkd was never tuned
 
-El arbol no definia **ninguna** propiedad `ro.lmk.*` ni `ro.config.low_ram`.
-En `system/memory/lmkd/lmkd.cpp`:
+The tree defined **no** `ro.lmk.*` property and no `ro.config.low_ram`. In
+`system/memory/lmkd/lmkd.cpp`:
 
 ```c
 low_ram_device = property_get_bool("ro.config.low_ram", false);   // -> false
@@ -148,56 +146,56 @@ thrashing_limit = low_ram_device ? DEF_THRASHING_LOWRAM : DEF_THRASHING;
 #define DEF_THRASHING        100
 ```
 
-Es decir, `thrashing_limit=100`: lmkd no considera que el sistema este
-*thrashing* hasta un 100% de refaults, y aguanta segundos de swap machacado
-—con la UI ya congelada— antes de matar nada.
+So `thrashing_limit=100`: lmkd does not treat the system as thrashing until the
+refault ratio reaches 100%, tolerating seconds of heavy swapping, with the UI
+already frozen, before killing anything.
 
 ```properties
 ro.lmk.thrashing_limit=30
 ro.lmk.swap_free_low_percentage=20
 ```
 
-### Causa secundaria: ADPF desactivado
+### Secondary cause: ADPF was disabled
 
 ```
 E perf_hint: createSessionUsingConfig: PerformanceHint cannot create session.
              PowerHintSessions are not supported!
 ```
 
-SystemUI, Chrome, Reddit y GMS pedian sesiones de rendimiento y **todas
-fallaban**. El HAL de power de Lineage si implementa `PowerHintSession`, pero
-el gate es:
+SystemUI, Chrome, Reddit and GMS all asked for performance hint sessions and
+**every one failed**. The Lineage power HAL does implement `PowerHintSession`,
+but the gate is:
 
 ```cpp
 if (!HintManager::GetInstance()->IsAdpfSupported())
     return EX_UNSUPPORTED_OPERATION;   // IsAdpfSupported() == !adpfs_.empty()
 ```
 
-y `configs/powerhint.json` solo tenia `Nodes` y `Actions`, sin `AdpfConfig`.
-Se anade un perfil con los 20 campos que exige el parser.
+and `configs/powerhint.json` only carried `Nodes` and `Actions`, with no
+`AdpfConfig`. A profile with the 20 fields the parser requires was added.
 
-Ademas hacia falta el kernel: `CONFIG_UCLAMP_TASK` **ya estaba en el codigo**
-de este 4.19 pero nunca se habia activado, y es el mecanismo con el que el HAL
-sube la frecuencia minima de los hilos de UI. `CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y`
-cubre su dependencia.
+The kernel side was also missing: `CONFIG_UCLAMP_TASK` **was already in the
+code** of this 4.19 tree but had never been enabled, and it is how the HAL
+raises the minimum frequency of UI threads.
+`CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y` satisfies its dependency.
 
-### Comprobar que esta activo
+### Verify it is live
 
 ```bash
 adb shell getprop ro.lmk.thrashing_limit             # 30
-adb shell cat /proc/sys/kernel/sched_util_clamp_min  # existe = uclamp activo
-adb logcat -d | grep perf_hint                       # sin "not supported"
+adb shell cat /proc/sys/kernel/sched_util_clamp_min  # exists = uclamp active
+adb logcat -d | grep perf_hint                       # no "not supported"
 adb shell dumpsys android.hardware.power.IPower/default | grep -A3 "ADPF list"
 ```
 
-Lo ultimo deberia listar sesiones vivas, por ejemplo de SystemUI.
+The last one should list live sessions, for example from SystemUI.
 
 ---
 
-## Nota sobre el zram
+## A note on zram
 
-El fstab pide `zramsize=50%`. Conviene no subirlo a mano con apps tipo kernel
-manager: las paginas comprimidas **siguen ocupando RAM fisica**, asi que un
-zram desproporcionado le quita memoria real al conjunto de trabajo y provoca
-mas thrashing, justo lo que se intenta evitar. En un 3 GB se vio un zram de
-2 GiB (71% de la RAM) puesto a mano.
+The fstab asks for `zramsize=50%`. Do not raise it by hand with a kernel
+manager app: compressed pages **still occupy physical RAM**, so an oversized
+zram takes real memory away from the working set and causes more thrashing,
+which is exactly what this is trying to avoid. A 3 GB unit was seen with a
+manually set 2 GiB zram, 71% of its RAM.
