@@ -1,126 +1,127 @@
-# OrangeFox para merlinx — guia de compilacion
+# OrangeFox for merlinx — build guide
 
-Rama `recovery` de la guia de **mt6768-place**. La de la ROM esta en
+`recovery` branch of the **mt6768-place** guide. The ROM guide is on
 [`main`](../../tree/main).
 
-Construye **OrangeFox R12.0** (base TWRP 12.1) para Xiaomi **merlinx**,
-pensado para convivir con una ROM de **vendor S** (Android 17).
+Builds **OrangeFox R12.0** (TWRP 12.1 base) for the Xiaomi **merlinx**,
+targeting a host ROM with an **S vendor** (Android 17).
 
-Documentacion detallada de cada problema y su arreglo:
-**[recovery-guide](https://github.com/mt6768-place/recovery-guide/wiki)**.
+Full write-up of every problem and its fix:
+**[recovery-guide](https://github.com/mt6768-place/recovery-guide)**.
 
 ---
 
-## Compilar
+## Build
 
 ```bash
 bash scripts/sync.sh ~/fox_12.1            # repo init + sync
-bash scripts/apply-patches.sh ~/fox_12.1   # parches sobre TWRP/AOSP/OrangeFox
+bash scripts/apply-patches.sh ~/fox_12.1   # TWRP/AOSP/OrangeFox patches
 bash scripts/build.sh ~/fox_12.1           # lunch + mka recoveryimage
 ```
 
-La imagen y el zip instalable salen en `out/target/product/merlinx/`.
+The image and the flashable zip land in `out/target/product/merlinx/`.
 
-## Repos que intervienen
+## Repositories involved
 
-| Ruta | Origen | Rama |
+| Path | Source | Branch |
 |---|---|---|
 | `device/xiaomi/merlinx` | `mt6768-place/recovery_device_xiaomi_merlinx` | `recovery-12.1` |
-| resto del arbol | `gitlab.com/OrangeFox/sync` | `fox_12.1` |
+| everything else | `gitlab.com/OrangeFox/sync` | `fox_12.1` |
 
-El device tree del recovery es **un repo aparte** del de la ROM: aunque
-comparten ruta, no tienen nada que ver.
+The recovery device tree is **a separate repository** from the ROM one. They
+share a path inside their respective trees but are unrelated.
 
 ---
 
-## Parches incluidos
+## The four patches
 
-Cuatro cambios en repos que no alojamos. Sin ellos, o la build falla, o el
-recovery arranca pero no sirve.
+Changes in repositories we do not mirror. Without them the build either fails
+or the recovery boots but is useless. The first two are genuine
+**uninitialised-memory bugs**, only visible because Android builds with
+`-ftrivial-auto-var-init=pattern`, which fills locals with `0xAA...`.
 
-### `0001-vold-fbe-fixes.patch` — descifrado sin contrasena
+### `0001-vold-fbe-fixes.patch` — decryption without a credential
 
-Dos bugs en `system/vold/Decrypt.cpp`:
+Two bugs in `system/vold/Decrypt.cpp`.
 
-**Buffer sin inicializar.** Para el caso "sin credencial":
+**A half-filled buffer.** For the no-credential case:
 
 ```c
-unsigned char password_token[PASSWORD_TOKEN_SIZE];   // 32 bytes, SIN inicializar
+unsigned char password_token[PASSWORD_TOKEN_SIZE];   // 32 bytes, uninitialised
 std::string defpassword = "default-password";        // 16 bytes
-memcpy(password_token, defpassword.data(), 16);      // los otros 16, basura
+memcpy(password_token, defpassword.data(), 16);      // the other 16 are garbage
 ```
 
-AOSP hace `Arrays.copyOf(DEFAULT_PASSWORD, STRETCHED_LSKF_LENGTH)`, o sea
-`"default-password"` **rellenado con ceros hasta 32**. TWRP escribia solo los
-16 primeros y dejaba el resto sin inicializar; con
-`-ftrivial-auto-var-init=pattern` esos bytes valen `0xAA...`, contaminaban el
-`application_id` y la clave derivada salia mal. Se arregla con `= {0}`.
+AOSP's `SyntheticPasswordManager.stretchLskf()` does
+`Arrays.copyOf(DEFAULT_PASSWORD, STRETCHED_LSKF_LENGTH)`: `"default-password"`
+**zero padded to 32 bytes**. TWRP wrote only the first 16 and left the rest
+uninitialised, which corrupted the `application_id` and derived the wrong key.
+The fix is `= {0}`.
 
-**El tag GCM no se comprobaba**, lo que ocultaba el fallo anterior: se pasaba
-un buffer `tag` sin inicializar y se ignoraba el resultado de
-`EVP_DecryptFinal_ex`, asi que con clave incorrecta devolvia basura en
-silencio y el error solo aparecia mucho despues, en
-`fscrypt_unlock_user_key`. Ahora se extrae el tag real (ultimos 16 bytes) y se
-verifica.
+**The GCM tag was never checked**, which is what hid the bug above: an
+uninitialised `tag` buffer was passed in and the result of
+`EVP_DecryptFinal_ex` was ignored, so a wrong key returned garbage silently and
+the failure only surfaced much later, in `fscrypt_unlock_user_key`, with no
+clue as to the cause. The real tag is now extracted and verified.
 
-### `0002-aidl-uninitialized-pointer.patch` — build que petaba al 99%
+### `0002-aidl-uninitialized-pointer.patch` — build dying at 99%
 
 ```cpp
 struct ConstReferenceFinder : AidlVisitor {
-  const AidlConstantReference* found;   // sin inicializar
+  const AidlConstantReference* found;   // uninitialised
 ```
 
-Con `-ftrivial-auto-var-init=pattern` vale `0xaaaaaaaaaaaaaaaa`, asi que
-`if (!found)` nunca se cumple, `Find()` devuelve un puntero basura y
-`AIDL_ERROR()` lo desreferencia: SIGSEGV en **toda anotacion con parametros**.
-Un `= nullptr` y listo.
+It holds `0xaaaaaaaaaaaaaaaa`, so `if (!found)` never fires, `Find()` returns a
+garbage pointer and `AIDL_ERROR()` dereferences it: SIGSEGV on **every AIDL
+annotation with parameters**. One `= nullptr` fixes it.
 
-### `0003-twrp-theme-absolute-out.patch` — `twres/` vacio
+### `0003-twrp-theme-absolute-out.patch` — empty `twres/`
 
-El tema se copia en tiempo de analisis de Soong, en
-`gui/libguitwrp_defaults.go`, usando `ctx.Config().Getenv("OUT")`. Si `OUT`
-llega como ruta **relativa** y `soong_build` corre con otro directorio de
-trabajo, el destino se resuelve mal, `MkdirAll` falla, **todos los errores se
-ignoran** y la build muere al 99% con:
+The theme is copied during **Soong analysis**, not by a ninja rule, from
+`gui/libguitwrp_defaults.go`, using `ctx.Config().Getenv("OUT")`. If `OUT`
+arrives as a **relative** path and `soong_build` runs from a different working
+directory, the destination resolves wrong, `MkdirAll` fails and **every error
+is discarded**. The build carries on and dies at 99%:
 
 ```
 sed: .../recovery/root/twres/splash.xml: No such file or directory
 ```
 
-El parche ancla `OUT` a ruta absoluta.
+The patch anchors `OUT` to an absolute path.
 
-### `0004-orangefox-isolate-tmp.patch` — builds que se pisan
+### `0004-orangefox-isolate-tmp.patch` — builds clobbering each other
 
-`vendor/recovery/OrangeFox_A12.sh` usa rutas fijas en `/tmp`
-(`/tmp/fox_build_000tmp.txt`, `/tmp/Fox_000_tmp`, `/tmp/oFox00.tmp`...). En una
-maquina compartida, **dos usuarios compilando OrangeFox a la vez se leen las
-variables el uno al otro**. Sintoma real: la imagen salio a `/OrangeFox-...img`
-(con `$OUT` vacio) porque el script cargo el fichero de estado de otro
-usuario, que compilaba otro dispositivo. El parche mete todo bajo
-`/tmp/ofox_$(id -un)`.
+`OrangeFox_A12.sh` keeps its state in fixed `/tmp` paths
+(`/tmp/fox_build_000tmp.txt`, `/tmp/Fox_000_tmp`, `/tmp/oFox00.tmp`...). On a
+shared machine, two users building OrangeFox at the same time **read each
+other's variables**.
 
----
-
-## Dos trampas de la build
-
-**`vendorsetup.sh` solo corre al hacer `source build/envsetup.sh`.** Si solo
-relanzas `lunch`, las variables `OF_*` / `FOX_*` no se refrescan. Y quitar una
-variable del fichero no basta: si ya estaba exportada en el shell, sobrevive.
-Hay que ponerla explicitamente a `0`.
-
-**El staging del ramdisk no siempre se reinstala.** En builds incrementales,
-la regla que copia por ejemplo `libminuitwrp.so` al ramdisk no vuelve a
-ejecutarse: la libreria se re-enlaza pero la imagen sigue llevando la vieja.
-Cuesta mucho depurar porque parece que tus cambios no hacen nada. `build.sh`
-borra el staging antes de compilar.
+Observed symptom: the image was written to `/OrangeFox-...img`, with `$OUT`
+empty, because the script loaded another user's state file for a different
+device. The patch moves everything under `/tmp/ofox_$(id -un)`.
 
 ---
 
-## Que lleva este recovery
+## Two build traps
 
-- Descifrado FBE con **PIN, patron o contrasena**, y tambien **sin credencial**
-- **MTP y adb a la vez**, y `adb sideload` que cierra bien
-- Instalacion de ROMs completas con particiones dinamicas (super)
-- Magisk, AromaFM, addon init.d, addon de borrado de **FRP**, lptools, nano y bash
-- **Flash Current OrangeFox**, util porque la ROM sobrescribe el recovery en
-  cada arranque si `install-recovery` esta activo
+**`vendorsetup.sh` only runs on `source build/envsetup.sh`.** Re-running
+`lunch` alone does not refresh the `OF_*` / `FOX_*` variables. Worse, removing
+a variable from the file is not enough: if it was already exported in the
+shell it survives the re-source. Set it to `0` explicitly.
+
+**The ramdisk staging directory is not always reinstalled.** On incremental
+builds the rule that copies, say, `libminuitwrp.so` into the ramdisk does not
+re-run: the library is relinked but the image still ships the old one. It is
+hard to debug because it looks like your changes do nothing. `build.sh` clears
+the staging directory first.
+
+---
+
+## What this recovery ships
+
+- FBE decryption with **PIN, pattern, password and no credential at all**
+- **MTP and adb at the same time**; `adb sideload` that exits cleanly
+- Installing full ROMs with dynamic partitions (super)
+- Magisk, AromaFM, init.d addon, **FRP** erase addon, lptools, nano, bash
+- **Flash Current OrangeFox**, useful because the ROM overwrites the recovery
+  on every boot when `install-recovery` is active

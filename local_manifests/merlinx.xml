@@ -3,7 +3,8 @@
 
   <remote name="hub" fetch="https://github.com" />
 
-  <!-- Device tree del recovery (separado del de la ROM) -->
+  <!-- Recovery device tree. Separate from the ROM device tree: they share the
+       path device/xiaomi/merlinx inside their trees but are unrelated. -->
   <project path="device/xiaomi/merlinx"
            name="mt6768-place/recovery_device_xiaomi_merlinx"
            remote="hub" revision="recovery-12.1" />
