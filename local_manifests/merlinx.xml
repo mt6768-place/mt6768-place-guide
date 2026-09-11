@@ -3,20 +3,27 @@
 
   <remote name="hub" fetch="https://github.com" />
 
-  <!-- Device trees -->
+  <!-- ================================================================
+       Trees con nuestros cambios para Android 17 (rama a17)
+       ================================================================ -->
+
   <project path="device/xiaomi/merlinx" name="mt6768-place/device_xiaomi_merlinx" remote="hub" revision="a17" />
   <project path="device/xiaomi/mt6768-common" name="mt6768-place/device_xiaomi_mt6768-common" remote="hub" revision="a17" />
 
-  <!-- Kernel (vendor S) -->
+  <!-- Kernel de vendor S (el repo terminado en -r era de vendor R) -->
   <project path="kernel/xiaomi/mt6768" name="mt6768-place/android_kernel_xiaomi_mt6768-s" remote="hub" revision="a17" />
 
-  <!-- Vendor blobs -->
   <project path="vendor/xiaomi/mt6768-common" name="mt6768-place/proprietary_vendor_xiaomi_mt6768-common" remote="hub" revision="a17" />
-  <project path="vendor/xiaomi/merlinx" name="mt6768-place/proprietary_vendor_xiaomi_merlinx" remote="hub" revision="15" />
-
-  <!-- Sepolicy y hardware -->
   <project path="device/mediatek/sepolicy_vndr" name="mt6768-place/android_device_mediatek_sepolicy_vndr" remote="hub" revision="a17" />
   <project path="hardware/mediatek" name="mt6768-place/android_hardware_mediatek" remote="hub" revision="a17" />
-  <project path="hardware/xiaomi" name="mt6768-place/android_hardware_xiaomi" remote="hub" revision="lineage-23.2" />
+
+  <!-- ================================================================
+       Trees sin cambios: se toman de su origen real, no se re-alojan.
+       Los blobs de merlinx usan git-lfs contra un host externo, asi que
+       copiarlos a la organizacion romperia los punteros.
+       ================================================================ -->
+
+  <project path="vendor/xiaomi/merlinx" name="mt6768-dev/proprietary_vendor_xiaomi_merlinx" remote="hub" revision="lineage-23.2" />
+  <project path="hardware/xiaomi" name="LineageOS/android_hardware_xiaomi" remote="hub" revision="lineage-23.2" />
 
 </manifest>
